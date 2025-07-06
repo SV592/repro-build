@@ -85,64 +85,59 @@ def find_yaml_files(project_path):
 
 def parse_yaml_for_build_info(yaml_file_path):
     """
-    Parses a given YAML file to extract potential build instructions and Node.js versions.
-    This is a preliminary parser and will be expanded.
+    Parses a given YAML file to extract potential build instructions and Node.js versions per job.
+    Returns a dictionary of job_name -> {'steps': [], 'node_version': None}.
     """
-    build_steps = []
-    detected_node_version = None
+    jobs_info = {}  # Stores info for each job
 
     try:
         with open(yaml_file_path, "r", encoding="utf-8") as f:
             yaml_content = yaml.safe_load(f)
 
-        # --- Basic GitHub Actions (workflow) parsing attempt ---
-        # Look for jobs and steps
         if isinstance(yaml_content, dict) and "jobs" in yaml_content:
             for job_name, job_details in yaml_content["jobs"].items():
+                current_job_steps = []
+                current_job_node_version = None
+
                 if isinstance(job_details, dict) and "steps" in job_details:
                     for step in job_details["steps"]:
                         if isinstance(step, dict):
                             # Extract run commands
                             if "run" in step:
-                                build_steps.append(step["run"])
+                                current_job_steps.append(step["run"])
                             # Look for node-version in 'uses' actions (e.g., actions/setup-node@vX)
                             if "uses" in step and "actions/setup-node" in step["uses"]:
                                 if "with" in step and "node-version" in step["with"]:
-                                    node_version_from_yaml = str(
-                                        step["with"]["node-version"]
-                                    ).strip()
-                                    # Clean up version string if it contains ranges or 'x'
-                                    match = re.match(
-                                        r"(\d+\.\d+(\.\d+|x)?).*",
-                                        node_version_from_yaml,
-                                    )
-                                    if match:
-                                        clean_version = match.group(1)
-                                        if clean_version.endswith(".x"):
-                                            detected_node_version = (
-                                                clean_version.replace(".x", "")
-                                            )
+                                    if (
+                                        current_job_node_version is None
+                                    ):  # Only capture the first one found per job
+                                        node_version_from_yaml = str(
+                                            step["with"]["node-version"]
+                                        ).strip()
+                                        match = re.match(
+                                            r"(\d+\.\d+(\.\d+|x)?).*",
+                                            node_version_from_yaml,
+                                        )
+                                        if match:
+                                            clean_version = match.group(1)
+                                            if clean_version.endswith(".x"):
+                                                current_job_node_version = (
+                                                    clean_version.replace(".x", "")
+                                                )
+                                            else:
+                                                current_job_node_version = clean_version
                                         else:
-                                            detected_node_version = clean_version
-                                    else:
-                                        detected_node_version = node_version_from_yaml  # Use as is if not parsable by regex
-                                    print(
-                                        f"{Colors.CYAN}Info: Detected Node.js version '{detected_node_version}' from '{os.path.basename(yaml_file_path)}'.{Colors.RESET}"
-                                    )
-                                    # For now, we take the first one found. Could be refined later.
-                                    break  # Exit inner loop once node version is found
+                                            current_job_node_version = (
+                                                node_version_from_yaml
+                                            )
+                                        print(
+                                            f"{Colors.CYAN}Info: Detected Node.js version '{current_job_node_version}' for job '{job_name}' in '{os.path.basename(yaml_file_path)}'.{Colors.RESET}"
+                                        )
 
-                if detected_node_version:
-                    break  # Exit outer loop if node version is found
-
-        # --- Basic Docker Compose parsing attempt (for services/build contexts) ---
-        # This is more for identifying services, not direct build steps for the host.
-        # Could be expanded to extract build commands from service definitions.
-        if isinstance(yaml_content, dict) and "services" in yaml_content:
-            for service_name, service_details in yaml_content["services"].items():
-                if isinstance(service_details, dict) and "build" in service_details:
-                    # This indicates a Docker build context, not direct build steps for the host
-                    pass  # Placeholder for future Docker Compose specific parsing
+                jobs_info[job_name] = {
+                    "steps": current_job_steps,
+                    "node_version": current_job_node_version,
+                }
 
     except yaml.YAMLError as e:
         print(
@@ -153,7 +148,7 @@ def parse_yaml_for_build_info(yaml_file_path):
             f"{Colors.RED}An unexpected error occurred while parsing '{yaml_file_path}': {e}{Colors.RESET}"
         )
 
-    return build_steps, detected_node_version
+    return jobs_info
 
 
 def find_project_info(project_path):
@@ -177,18 +172,31 @@ def find_project_info(project_path):
         print(f"  - {os.path.relpath(yf, project_path)}")
 
     # Initialize build_instructions and node_version from YAML
-    # These will now be populated AFTER user selects a specific YAML file
-    all_build_steps = []
-    final_node_version = None
+    # These will now be populated AFTER user selects a specific YAML file and job
+    all_jobs_parsed_info = (
+        {}
+    )  # New: Stores parsed info for all jobs across all YAML files
+
+    for yf_path in yaml_files:
+        jobs_data = parse_yaml_for_build_info(yf_path)
+        # Merge job data from current YAML file into all_jobs_parsed_info
+        # Handle potential job name conflicts if multiple YAMLs have same job names
+        for job_name, job_details in jobs_data.items():
+            # For simplicity, if job names conflict, the last one parsed wins.
+            # A more robust solution might append or rename.
+            all_jobs_parsed_info[f"{os.path.basename(yf_path)}::{job_name}"] = (
+                job_details
+            )
 
     project_info = {
-        "node_version": final_node_version,
+        "node_version": None,  # Will be populated after job selection
         "project_path": project_path,
         "package_manager": None,
-        "yaml_files": yaml_files,  # List of all detected YAML files
-        "selected_yaml_file": None,  # New: To store the user's selected YAML file
+        "yaml_files": yaml_files,
+        "selected_yaml_file": None,
         "project_type": project_type,
-        "build_steps_from_yaml": all_build_steps,
+        "build_steps_from_yaml": [],  # Will be populated after job selection
+        "parsed_jobs_info": all_jobs_parsed_info,  # New: Detailed info about all parsed jobs
     }
     return project_info
 
@@ -415,6 +423,54 @@ def get_yaml_file_selection(yaml_files):
             )
 
 
+def generate_dockerfile_from_yaml_info(project_info):
+    """
+    Generates the content for a Dockerfile based on information extracted from YAML.
+    """
+    node_version = project_info.get(
+        "node_version", "lts"
+    )  # Default to 'lts' if not found in YAML
+    build_steps = project_info.get("build_steps_from_yaml", [])
+    project_name = os.path.basename(project_info["project_path"])
+
+    dockerfile_content = f"""
+# Use a specific Node.js version for reproducibility, derived from YAML
+FROM node:{node_version}-alpine
+
+# Set the working directory in the container
+WORKDIR /app/{project_name}
+
+# Copy all project files into the container
+COPY . .
+
+# Install dependencies and run build steps as defined in YAML
+# These steps are extracted from the selected YAML file.
+"""
+    if build_steps:
+        dockerfile_content += "\n# Build steps from YAML:\n"
+        for i, step in enumerate(build_steps):
+            # Escape newlines in multiline commands for RUN instruction
+            cleaned_step = step.replace("\n", " \\\n    ")
+            dockerfile_content += f"RUN {cleaned_step}\n"
+    else:
+        dockerfile_content += (
+            "# No specific build steps found in the selected YAML file.\n"
+        )
+        dockerfile_content += (
+            "# You may need to add manual installation/build commands here.\n"
+        )
+
+    dockerfile_content += """
+# Expose a port if your application is a web server (e.g., React, Vue apps often run on 3000 or 5000)
+# You might need to customize this based on your project's needs
+# EXPOSE 3000
+
+# Command to run the application (placeholder - customize as needed)
+# CMD [ "npm", "start" ]
+"""
+    return dockerfile_content.strip()
+
+
 def main():
     """
     Main function to parse command-line arguments and start the process.
@@ -437,6 +493,12 @@ def main():
         "--yaml-file",  # New argument for direct YAML file selection
         type=str,
         help="Optional: Path to a specific YAML file to use for build instructions (relative to project_dir).",
+    )
+    parser.add_argument(
+        "--output-dockerfile",  # New argument for Dockerfile output name
+        type=str,
+        default="Dockerfile",
+        help="Name of the Dockerfile to generate (default: Dockerfile).",
     )
 
     args = parser.parse_args()
@@ -556,17 +618,109 @@ def main():
 
             # Step 6: Parse the selected YAML file for build info
             if selected_yaml_file_path:
-                build_steps, node_v = parse_yaml_for_build_info(selected_yaml_file_path)
-                project_info["build_steps_from_yaml"] = build_steps
-                # Only update node_version if it was found in the selected YAML
-                if node_v:
-                    project_info["node_version"] = node_v
+                # Now, parse the selected YAML file for *all* its job details
+                parsed_jobs_info = parse_yaml_for_build_info(selected_yaml_file_path)
+                project_info["parsed_jobs_info"] = (
+                    parsed_jobs_info  # Store the full parsed info
+                )
+
+                # Step 6.1: Select the build job from the parsed info
+                selected_job_name = None
+                if len(parsed_jobs_info) == 1:
+                    selected_job_name = list(parsed_jobs_info.keys())[0]
+                    print(
+                        f"{Colors.GREEN}Automatically selected single job '{selected_job_name}' from YAML file.{Colors.RESET}"
+                    )
+                elif len(parsed_jobs_info) > 1:
+                    print(
+                        f"\n{Colors.BLUE}Multiple jobs detected in '{os.path.basename(selected_yaml_file_path)}'. Please select the build job:{Colors.RESET}"
+                    )
+                    job_names = list(parsed_jobs_info.keys())
+                    for i, job_n in enumerate(job_names):
+                        print(f"  {Colors.YELLOW}[{i+1}]{Colors.RESET} {job_n}")
+                    print(f"  {Colors.YELLOW}[q]{Colors.RESET} Quit")
+
+                    while True:
+                        job_choice = input(
+                            f"{Colors.CYAN}Enter a number or 'q' to quit: {Colors.RESET}"
+                        ).strip()
+                        if job_choice.lower() == "q":
+                            print(
+                                f"{Colors.YELLOW}Job selection cancelled. Please select another project or try again.{Colors.RESET}"
+                            )
+                            continue  # Restart the main loop
+                        elif job_choice.isdigit():
+                            try:
+                                index = int(job_choice) - 1
+                                if 0 <= index < len(job_names):
+                                    selected_job_name = job_names[index]
+                                    print(
+                                        f"{Colors.GREEN}Selected job:{Colors.RESET} {selected_job_name}"
+                                    )
+                                    break  # Exit job selection loop
+                                else:
+                                    print(
+                                        f"{Colors.RED}Invalid number. Please choose a number from the list.{Colors.RESET}"
+                                    )
+                            except ValueError:
+                                print(
+                                    f"{Colors.RED}Invalid input. Please enter a number or 'q'.{Colors.RESET}"
+                                )
+                        else:
+                            print(
+                                f"{Colors.RED}Invalid input. Please enter a number or 'q'.{Colors.RESET}"
+                            )
+                else:
+                    print(
+                        f"{Colors.YELLOW}No jobs found in the selected YAML file. Cannot extract build steps.{Colors.RESET}"
+                    )
+                    continue  # Restart main loop if no jobs are found
+
+                if selected_job_name:
+                    job_details = parsed_jobs_info.get(selected_job_name, {})
+                    project_info["build_steps_from_yaml"] = job_details.get("steps", [])
+                    if job_details.get("node_version"):
+                        project_info["node_version"] = job_details["node_version"]
+                    else:
+                        print(
+                            f"{Colors.YELLOW}Warning: No Node.js version detected in the selected job '{selected_job_name}'. Defaulting to 'lts'.{Colors.RESET}"
+                        )
+                        project_info["node_version"] = (
+                            "lts"  # Fallback if job has no node version
+                        )
+                else:
+                    print(
+                        f"{Colors.RED}No build job selected. Cannot proceed with build analysis.{Colors.RESET}"
+                    )
+                    continue  # Restart main loop if job selection fails
+
             else:
-                # If no YAML file was selected (e.g., user quit selection)
                 print(
                     f"{Colors.RED}No YAML file selected for parsing. Cannot proceed with build analysis.{Colors.RESET}"
                 )
-                continue  # Restart the loop
+                continue  # Restart the main loop
+
+            # Step 7: Generate Dockerfile
+            dockerfile_content = generate_dockerfile_from_yaml_info(project_info)
+            dockerfile_path = os.path.join(project_abs_path, args.output_dockerfile)
+
+            try:
+                with open(dockerfile_path, "w", encoding="utf-8") as f:
+                    f.write(dockerfile_content)
+                print(
+                    f"\n{Colors.GREEN}Dockerfile generated successfully at:{Colors.RESET} {Colors.BOLD}{dockerfile_path}{Colors.RESET}"
+                )
+                print("\n--- Generated Dockerfile Content ---")
+                print(dockerfile_content)
+                print("------------------------------------\n")
+            except IOError as e:
+                print(
+                    f"{Colors.RED}Error writing Dockerfile to {dockerfile_path}: {e}{Colors.RESET}"
+                )
+                print(
+                    f"{Colors.YELLOW}Please ensure you have write permissions in the project directory.{Colors.RESET}"
+                )
+                continue  # Restart loop if Dockerfile writing fails
 
             # Finally, print project info and break the main loop
             print("\n--- Project Information ---")
@@ -574,9 +728,9 @@ def main():
                 print(f"{key}: {value}")
             print("---------------------------\n")
             print(
-                f"{Colors.BLUE}Next: Generate the Dockerfile based on this information and execute build.{Colors.RESET}"
+                f"{Colors.BLUE}Next: Implement Docker build and run commands.{Colors.RESET}"
             )
-            break  # Exit the while loop as a valid YAML project with selected file is found
+            break  # Exit the while loop as a valid YAML project with selected file and job is found
         else:
             # If find_project_info returned None (meaning no YAML found in that path)
             print(
