@@ -5,6 +5,7 @@ import os
 import colorama
 import json
 import re
+import subprocess
 
 # Initialize Colorama for cross-platform ANSI support
 colorama.init()
@@ -49,10 +50,6 @@ def list_subdirectories(path):
             f"{Colors.RED}An unexpected error occurred while listing directories: {e}{Colors.RESET}"
         )
     return sorted(subdirs)  # Return sorted list for consistent display
-
-
-# Removed: get_node_version_from_package_json function
-# This functionality is being removed as per user request.
 
 
 def find_yaml_files(project_path):
@@ -250,6 +247,53 @@ def get_project_directory_interactive():
                     continue
 
 
+def git_checkout(repo_path, commit_hash):
+    """
+    Performs a git checkout to the specified commit hash in the given repository path.
+    """
+    if not os.path.isdir(os.path.join(repo_path, ".git")):
+        print(
+            f"{Colors.RED}Error: '{repo_path}' is not a Git repository. Cannot perform checkout.{Colors.RESET}"
+        )
+        return False
+
+    print(
+        f"{Colors.BLUE}Attempting to checkout commit:{Colors.RESET} {Colors.BOLD}{commit_hash}{Colors.RESET} {Colors.BLUE}in '{repo_path}'...{Colors.RESET}"
+    )
+    try:
+        # Use subprocess.run for better control and error handling
+        result = subprocess.run(
+            ["git", "checkout", commit_hash],
+            cwd=repo_path,  # Execute the command in the project directory
+            capture_output=True,  # Capture stdout and stderr
+            text=True,  # Decode output as text
+            check=True,  # Raise CalledProcessError if the command returns a non-zero exit code
+        )
+        print(f"{Colors.GREEN}Git checkout successful!{Colors.RESET}")
+        # print(f"Output:\n{result.stdout}") # Uncomment for verbose git output
+        return True
+    except subprocess.CalledProcessError as e:
+        print(
+            f"{Colors.RED}Error during Git checkout to '{commit_hash}':{Colors.RESET}"
+        )
+        print(f"{Colors.RED}Command: {' '.join(e.cmd)}{Colors.RESET}")
+        print(f"{Colors.RED}Stderr:\n{e.stderr}{Colors.RESET}")
+        print(
+            f"{Colors.YELLOW}Please ensure the commit hash is valid and the repository is clean (no uncommitted changes).{Colors.RESET}"
+        )
+        return False
+    except FileNotFoundError:
+        print(
+            f"{Colors.RED}Error: 'git' command not found. Please ensure Git is installed and in your system's PATH.{Colors.RESET}"
+        )
+        return False
+    except Exception as e:
+        print(
+            f"{Colors.RED}An unexpected error occurred during Git checkout: {e}{Colors.RESET}"
+        )
+        return False
+
+
 def main():
     """
     Main function to parse command-line arguments and start the process.
@@ -263,11 +307,18 @@ def main():
         nargs="?",
         help="Path to the root directory of the NPM project.",
     )
+    parser.add_argument(
+        "--commit-hash",
+        type=str,
+        help="Optional: Git commit hash for the build to reproduce.",
+    )
 
     args = parser.parse_args()
 
     project_abs_path = None
+    commit_hash_to_use = None
 
+    # Step 1: Get project directory
     if args.project_dir:
         project_abs_path = os.path.abspath(args.project_dir)
         if not os.path.isdir(project_abs_path):
@@ -285,19 +336,58 @@ def main():
         f"{Colors.GREEN}CLI initialized. Analyzing project directory:{Colors.RESET} {Colors.BOLD}{project_abs_path}{Colors.RESET}"
     )
 
+    # Step 2: Get commit hash (from arg or interactively)
+    if args.commit_hash:
+        commit_hash_to_use = args.commit_hash
+        print(
+            f"{Colors.GREEN}Using commit hash from argument:{Colors.RESET} {Colors.BOLD}{commit_hash_to_use}{Colors.RESET}"
+        )
+    else:
+        # Check if it's a Git repo before asking for commit hash
+        if os.path.isdir(os.path.join(project_abs_path, ".git")):
+            commit_hash_to_use = input(
+                f"{Colors.CYAN}Enter the Git commit hash for reproduction (leave blank for current state): {Colors.RESET}"
+            ).strip()
+            if not commit_hash_to_use:
+                print(
+                    f"{Colors.YELLOW}No commit hash provided. Proceeding with current state of the project.{Colors.RESET}"
+                )
+            else:
+                print(
+                    f"{Colors.GREEN}Using commit hash from interactive input:{Colors.RESET} {Colors.BOLD}{commit_hash_to_use}{Colors.RESET}"
+                )
+        else:
+            print(
+                f"{Colors.YELLOW}Project is not a Git repository. Cannot use commit hash.{Colors.RESET}"
+            )
+            commit_hash_to_use = None  # Ensure it's None if not a git repo
+
+    # Step 3: Perform Git checkout if a commit hash is available
+    if commit_hash_to_use:
+        if not git_checkout(project_abs_path, commit_hash_to_use):
+            print(
+                f"{Colors.RED}Git checkout failed. Cannot proceed with analysis.{Colors.RESET}"
+            )
+            return  # Exit if checkout fails
+
+    # Step 4: Find project info based on the potentially checked-out state
+    # This ensures find_project_info scans the correct version of the files.
     project_info = find_project_info(project_abs_path)
 
     if project_info:
+        # Add the commit_hash_to_use to the project_info for completeness
+        project_info["commit_hash"] = commit_hash_to_use
+
         print("\n--- Project Information ---")
         for key, value in project_info.items():
             print(f"{key}: {value}")
         print("---------------------------\n")
         print(
-            f"{Colors.BLUE}Next: Add argument for commit hash and integrate Docker build/run.{Colors.RESET}"
+            f"{Colors.BLUE}Next: Refactor to parse YAML files for build instructions and Node.js version.{Colors.RESET}"
         )
     else:
         print(
-            f"{Colors.RED}Failed to gather necessary project information. Exiting.{Colors.RESET}"
+            f"{Colors.RED}Failed to gather necessary project information after potential checkout. Exiting.{Colors.RESET}"
         )
 
 
