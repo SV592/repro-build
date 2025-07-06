@@ -1,8 +1,12 @@
+# repro_build_cli.py
+
 import argparse
 import os
 import colorama
+import json
+import re
 
-# Colorama for cross-platform ANSI support
+# Initialize Colorama for cross-platform ANSI support
 colorama.init()
 
 
@@ -33,6 +37,7 @@ def list_subdirectories(path):
                     "node_modules",
                     "venv",
                     "__pycache__",
+                    ".git",
                 ]:
                     subdirs.append(item_path)
     except FileNotFoundError:
@@ -44,6 +49,83 @@ def list_subdirectories(path):
             f"{Colors.RED}An unexpected error occurred while listing directories: {e}{Colors.RESET}"
         )
     return sorted(subdirs)  # Return sorted list for consistent display
+
+
+def get_node_version_from_package_json(package_json_path):
+    """
+    Reads the package.json file and attempts to extract the Node.js version.
+    It looks for the 'engines.node' field. If not found, it suggests a default.
+    """
+    try:
+        with open(package_json_path, "r", encoding="utf-8") as f:
+            package_data = json.load(f)
+
+        node_version = package_data.get("engines", {}).get("node")
+
+        if node_version:
+            # Clean up the version string, e.g., remove '^', '~', '>', etc.
+            # We'll aim for a specific major/minor version for Docker.
+            # This regex captures digits, dots, and 'x' (for 16.x.x)
+            match = re.match(r"(\d+\.\d+(\.\d+|x)?).*", node_version)
+            if match:
+                clean_version = match.group(1)
+                # Replace 'x' with '0' for a more concrete version if needed, or just use as is.
+                # For Docker, '16' or '16.x' is often sufficient to pick the latest patch.
+                if clean_version.endswith(".x"):
+                    return clean_version.replace(".x", "")  # e.g., '16.x' -> '16'
+                return clean_version
+            else:
+                print(
+                    f"{Colors.YELLOW}Warning: Could not parse Node.js version '{node_version}' from engines.node. Using default 'lts'.{Colors.RESET}"
+                )
+                return "lts"  # Fallback to a common LTS version
+        else:
+            print(
+                f"{Colors.YELLOW}Warning: 'engines.node' field not found in package.json. Using default Node.js 'lts' version.{Colors.RESET}"
+            )
+            return "lts"  # Default to a common LTS version if not specified
+
+    except FileNotFoundError:
+        print(
+            f"{Colors.RED}Error: package.json not found at {package_json_path}. This should not happen if called correctly.{Colors.RESET}"
+        )
+        return None
+    except json.JSONDecodeError:
+        print(f"{Colors.RED}Error: Invalid JSON in {package_json_path}.{Colors.RESET}")
+        return None
+    except Exception as e:
+        print(
+            f"{Colors.RED}An unexpected error occurred while reading package.json: {e}{Colors.RESET}"
+        )
+        return None
+
+
+def find_project_info(project_path):
+    """
+    Finds project-related files like package.json and extracts necessary info.
+    Checks for package.json existence and extracts Node.js version.
+    """
+    package_json_path = os.path.join(project_path, "package.json")
+
+    if not os.path.exists(package_json_path):
+        print(
+            f"{Colors.RED}Error: No package.json found in '{project_path}'. "
+            "This directory does not appear to be an NPM project.{Colors.RESET}"
+        )
+        return None
+
+    node_version = get_node_version_from_package_json(package_json_path)
+
+    if node_version:
+        print(
+            f"{Colors.GREEN}Detected Node.js version:{Colors.RESET} {Colors.BOLD}{node_version}{Colors.RESET}"
+        )
+        return {
+            "node_version": node_version,
+            "project_path": project_path,
+            "package_manager": "npm",  # Defaulting to npm for now, will refine later
+        }
+    return None
 
 
 def get_project_directory_interactive():
@@ -61,17 +143,27 @@ def get_project_directory_interactive():
                 f"\n{Colors.BLUE}Detected subdirectories (select by number or enter path):{Colors.RESET}"
             )
             for i, subdir in enumerate(subdirs):
-                print(
-                    f"  {Colors.YELLOW}[{i+1}]{Colors.RESET} {os.path.basename(subdir)}"
-                )
-            print(f"  {Colors.YELLOW}[.]{Colors.RESET} Stay in current directory")
+                # Check if the subdir is an NPM project and highlight it
+                if os.path.exists(os.path.join(subdir, "package.json")):
+                    print(
+                        f"  {Colors.GREEN}[{i+1}]{Colors.RESET} {os.path.basename(subdir)} {Colors.CYAN}(NPM Project){Colors.RESET}"
+                    )
+                else:
+                    print(
+                        f"  {Colors.YELLOW}[{i+1}]{Colors.RESET} {os.path.basename(subdir)}"
+                    )
+            print(
+                f"  {Colors.YELLOW}[.]{Colors.RESET} Stay in current directory (select if this is your project)"
+            )
             print(f"  {Colors.YELLOW}[..]{Colors.RESET} Go up one level")
             print(f"  {Colors.YELLOW}[q]{Colors.RESET} Quit")
         else:
             print(
                 f"{Colors.YELLOW}No subdirectories found in '{current_path}'.{Colors.RESET}"
             )
-            print(f"  {Colors.YELLOW}[.]{Colors.RESET} Stay in current directory")
+            print(
+                f"  {Colors.YELLOW}[.]{Colors.RESET} Stay in current directory (select if this is your project)"
+            )
             print(f"  {Colors.YELLOW}[..]{Colors.RESET} Go up one level")
             print(f"  {Colors.YELLOW}[q]{Colors.RESET} Quit")
 
@@ -86,7 +178,17 @@ def get_project_directory_interactive():
             # User chose current directory
             project_abs_path = os.path.abspath(current_path)
             if os.path.isdir(project_abs_path):
-                return project_abs_path
+                # Before returning, ensure it's an NPM project
+                if os.path.exists(os.path.join(project_abs_path, "package.json")):
+                    print(
+                        f"{Colors.GREEN}Selected project:{Colors.RESET} {os.path.basename(project_abs_path)}"
+                    )
+                    return project_abs_path
+                else:
+                    print(
+                        f"{Colors.RED}Error: Current directory '{os.path.basename(project_abs_path)}' is not an NPM project (no package.json found). Please select a valid project or navigate.{Colors.RESET}"
+                    )
+                    continue
             else:
                 print(
                     f"{Colors.RED}Error: Current path '{project_abs_path}' is not a valid directory.{Colors.RESET}"
@@ -132,10 +234,18 @@ def get_project_directory_interactive():
                 )
         else:
             # User entered a custom path
-            input_path = choice
-            project_abs_path = os.path.abspath(
-                os.path.join(current_path, input_path)
-            )  # Resolve relative to current_path
+            input_path = choice.strip('"').strip(
+                "'"
+            )  # NEW: Strip quotes from the input path
+
+            if os.path.isabs(input_path):
+                # If the input is already an absolute path, use it directly
+                project_abs_path = os.path.abspath(input_path)
+            else:
+                # Otherwise, resolve it relative to the current_path
+                project_abs_path = os.path.abspath(
+                    os.path.join(current_path, input_path)
+                )
 
             if not os.path.isdir(project_abs_path):
                 print(
@@ -187,15 +297,28 @@ def main():
         # If project_dir was NOT provided, prompt the user with navigation
         project_abs_path = get_project_directory_interactive()
         if not project_abs_path:  # User chose to quit
-            print(f"{Colors.YELLOW}Operation cancelled by user.{Colors.RESET}")
+            print(f"{Colors.YELLOW}Operation cancelled by user. Exiting.{Colors.RESET}")
             return
 
     print(
         f"{Colors.GREEN}CLI initialized. Analyzing project directory:{Colors.RESET} {Colors.BOLD}{project_abs_path}{Colors.RESET}"
     )
-    print(
-        f"{Colors.BLUE}Next: Detect project type and gather information.{Colors.RESET}"
-    )
+
+    # Call find_project_info
+    project_info = find_project_info(project_abs_path)
+
+    if project_info:
+        print("\n--- Project Information ---")
+        for key, value in project_info.items():
+            print(f"{key}: {value}")
+        print("---------------------------\n")
+        print(
+            f"{Colors.BLUE}Next: Generate the Dockerfile based on this information.{Colors.RESET}"
+        )
+    else:
+        print(
+            f"{Colors.RED}Failed to gather necessary project information. Exiting.{Colors.RESET}"
+        )
 
 
 if __name__ == "__main__":
