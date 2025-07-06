@@ -1,5 +1,3 @@
-# repro_build_cli.py
-
 import argparse
 import os
 import colorama
@@ -133,11 +131,16 @@ def parse_yaml_for_build_info(yaml_file_path):
                                         print(
                                             f"{Colors.CYAN}Info: Detected Node.js version '{current_job_node_version}' for job '{job_name}' in '{os.path.basename(yaml_file_path)}'.{Colors.RESET}"
                                         )
+                                    # Removed the 'break' here to allow collecting all run commands
+                                    # The outer 'if detected_node_version: break' was also removed from this function
 
-                jobs_info[job_name] = {
-                    "steps": current_job_steps,
-                    "node_version": current_job_node_version,
-                }
+                if (
+                    current_job_steps or current_job_node_version
+                ):  # Only add job if it has steps or a node version
+                    jobs_info[job_name] = {
+                        "steps": current_job_steps,
+                        "node_version": current_job_node_version,
+                    }
 
     except yaml.YAMLError as e:
         print(
@@ -182,17 +185,15 @@ def find_project_info(project_path):
         # Merge job data from current YAML file into all_jobs_parsed_info
         # Handle potential job name conflicts if multiple YAMLs have same job names
         for job_name, job_details in jobs_data.items():
-            # For simplicity, if job names conflict, the last one parsed wins.
-            # A more robust solution might append or rename.
-            all_jobs_parsed_info[f"{os.path.basename(yf_path)}::{job_name}"] = (
-                job_details
-            )
+            # Prepend filename to job name to ensure uniqueness across multiple YAML files
+            unique_job_name = f"{os.path.basename(yf_path)}::{job_name}"
+            all_jobs_parsed_info[unique_job_name] = job_details
 
     project_info = {
         "node_version": None,  # Will be populated after job selection
         "project_path": project_path,
         "package_manager": None,
-        "yaml_files": yaml_files,
+        "yaml_files": yaml_files,  # List of all detected YAML files
         "selected_yaml_file": None,
         "project_type": project_type,
         "build_steps_from_yaml": [],  # Will be populated after job selection
@@ -381,6 +382,40 @@ def git_checkout(repo_path, commit_hash):
         return False
 
 
+def get_current_git_commit_hash(repo_path):
+    """
+    Gets the current full commit hash of the Git repository at repo_path.
+    Returns the commit hash string or None if not a Git repo or error occurs.
+    """
+    if not os.path.isdir(os.path.join(repo_path, ".git")):
+        return None  # Not a Git repository
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print(
+            f"{Colors.YELLOW}Warning: Could not get current Git commit hash for '{repo_path}': {e.stderr.strip()}{Colors.RESET}"
+        )
+        return None
+    except FileNotFoundError:
+        print(
+            f"{Colors.YELLOW}Warning: 'git' command not found. Cannot auto-detect commit hash.{Colors.RESET}"
+        )
+        return None
+    except Exception as e:
+        print(
+            f"{Colors.YELLOW}Warning: An unexpected error occurred while getting Git commit hash: {e}{Colors.RESET}"
+        )
+        return None
+
+
 def get_yaml_file_selection(yaml_files):
     """
     Presents a list of detected YAML files and prompts the user to select one.
@@ -497,8 +532,8 @@ def main():
     parser.add_argument(
         "--output-dockerfile",  # New argument for Dockerfile output name
         type=str,
-        default="Dockerfile",
-        help="Name of the Dockerfile to generate (default: Dockerfile).",
+        default="Dockerfile",  # Default will be overridden if not specified
+        help="Name of the Dockerfile to generate (default: Dockerfile or <project_name>_<commit_hash>.Dockerfile).",
     )
 
     args = parser.parse_args()
@@ -543,17 +578,61 @@ def main():
         else:
             # Check if it's a Git repo before asking for commit hash
             if os.path.isdir(os.path.join(project_abs_path, ".git")):
-                commit_hash_to_use = input(
-                    f"{Colors.CYAN}Enter the Git commit hash for reproduction (leave blank for current state): {Colors.RESET}"
-                ).strip()
-                if not commit_hash_to_use:
+                # Attempt to get current commit hash automatically
+                current_repo_commit = get_current_git_commit_hash(project_abs_path)
+                if current_repo_commit:
                     print(
-                        f"{Colors.YELLOW}No commit hash provided. Proceeding with current state of the project.{Colors.RESET}"
+                        f"{Colors.CYAN}Detected current Git commit: {current_repo_commit[:7]}...{Colors.RESET}"
                     )
+                    prompt_choice = (
+                        input(
+                            f"{Colors.CYAN}Use this commit ({current_repo_commit[:7]}...)? [Y/n/q] (or enter a different hash): {Colors.RESET}"
+                        )
+                        .strip()
+                        .lower()
+                    )
+                    if prompt_choice == "y" or prompt_choice == "":
+                        commit_hash_to_use = current_repo_commit
+                        print(
+                            f"{Colors.GREEN}Using current Git commit: {commit_hash_to_use[:7]}...{Colors.RESET}"
+                        )
+                    elif prompt_choice == "n":
+                        commit_hash_to_use = input(
+                            f"{Colors.CYAN}Enter the Git commit hash for reproduction (leave blank for current state): {Colors.RESET}"
+                        ).strip()
+                        if not commit_hash_to_use:
+                            print(
+                                f"{Colors.YELLOW}No commit hash provided. Proceeding with current state of the project.{Colors.RESET}"
+                            )
+                        else:
+                            print(
+                                f"{Colors.GREEN}Using commit hash from interactive input:{Colors.RESET} {Colors.BOLD}{commit_hash_to_use}{Colors.RESET}"
+                            )
+                    elif prompt_choice == "q":
+                        print(
+                            f"{Colors.YELLOW}Operation cancelled by user. Exiting.{Colors.RESET}"
+                        )
+                        return  # Exit main if user quits
+                    else:
+                        commit_hash_to_use = (
+                            prompt_choice  # User entered a different hash directly
+                        )
+                        print(
+                            f"{Colors.GREEN}Using provided Git commit: {commit_hash_to_use[:7]}...{Colors.RESET}"
+                        )
                 else:
-                    print(
-                        f"{Colors.GREEN}Using commit hash from interactive input:{Colors.RESET} {Colors.BOLD}{commit_hash_to_use}{Colors.RESET}"
-                    )
+                    # Fallback to direct input if auto-detection fails or not a git repo
+                    commit_hash_to_use = input(
+                        f"{Colors.CYAN}Enter the Git commit hash for reproduction (leave blank for current state): {Colors.RESET}"
+                    ).strip()
+                    if not commit_hash_to_use:
+                        print(
+                            f"{Colors.YELLOW}No commit hash provided. Proceeding with current state of the project.{Colors.RESET}"
+                        )
+                    else:
+                        print(
+                            f"{Colors.GREEN}Using commit hash from interactive input:{Colors.RESET} {Colors.BOLD}{commit_hash_to_use}{Colors.RESET}"
+                        )
             else:
                 print(
                     f"{Colors.YELLOW}Project is not a Git repository. Cannot use commit hash.{Colors.RESET}"
@@ -701,8 +780,22 @@ def main():
                 continue  # Restart the main loop
 
             # Step 7: Generate Dockerfile
+            # Determine the output Dockerfile name
+            project_name = os.path.basename(project_info["project_path"])
+            dockerfile_output_name = args.output_dockerfile
+
+            # If default "Dockerfile" was used, append project name and commit hash
+            if dockerfile_output_name == "Dockerfile":
+                dockerfile_output_name = project_name
+                if project_info["commit_hash"]:
+                    # Use first 7 characters of commit hash for brevity
+                    dockerfile_output_name += f"_{project_info['commit_hash'][:7]}"
+                dockerfile_output_name += ".Dockerfile"
+
             dockerfile_content = generate_dockerfile_from_yaml_info(project_info)
-            dockerfile_path = os.path.join(project_abs_path, args.output_dockerfile)
+            # Dockerfile path is now relative to the script's directory
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            dockerfile_path = os.path.join(script_dir, dockerfile_output_name)
 
             try:
                 with open(dockerfile_path, "w", encoding="utf-8") as f:
@@ -718,7 +811,7 @@ def main():
                     f"{Colors.RED}Error writing Dockerfile to {dockerfile_path}: {e}{Colors.RESET}"
                 )
                 print(
-                    f"{Colors.YELLOW}Please ensure you have write permissions in the project directory.{Colors.RESET}"
+                    f"{Colors.YELLOW}Please ensure you have write permissions in the script's directory.{Colors.RESET}"
                 )
                 continue  # Restart loop if Dockerfile writing fails
 
