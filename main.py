@@ -1,6 +1,23 @@
 import argparse
 import os
 
+# For some color
+import colorama
+
+colorama.init()
+
+
+# ANSI color codes
+class Colors:
+    RESET = "\033[0m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+
 
 def get_project_directory_interactive():
     """
@@ -8,16 +25,18 @@ def get_project_directory_interactive():
     """
     while True:
         project_path = input(
-            "Please enter the path to your NPM project directory: "
+            f"{Colors.CYAN}Please enter the path to your NPM project directory: {Colors.RESET}"
         ).strip()
         if not project_path:
-            print("Path cannot be empty. Please try again.")
+            print(
+                f"{Colors.YELLOW}Path cannot be empty. Please try again.{Colors.RESET}"
+            )
             continue
 
         project_abs_path = os.path.abspath(project_path)
         if not os.path.isdir(project_abs_path):
             print(
-                f"Error: The provided path '{project_abs_path}' is not a valid directory. Please try again."
+                f"{Colors.RED}Error: The provided path '{project_abs_path}' is not a valid directory. Please try again.{Colors.RESET}"
             )
         else:
             return project_abs_path
@@ -28,7 +47,7 @@ def main():
     Main function to parse command-line arguments and start the process.
     """
     parser = argparse.ArgumentParser(
-        description="CLI for building reproducible NPM project environments with Docker."
+        description=f"{Colors.BOLD}CLI for building reproducible NPM project environments with Docker.{Colors.RESET}"
     )
     # Make project_dir optional by setting nargs='?'
     parser.add_argument(
@@ -47,20 +66,24 @@ def main():
         project_abs_path = os.path.abspath(args.project_dir)
         if not os.path.isdir(project_abs_path):
             print(
-                f"Error: The provided path '{project_abs_path}' is not a valid directory."
+                f"{Colors.RED}Error: The provided path '{project_abs_path}' is not a valid directory.{Colors.RESET}"
             )
             return
     else:
         # If project_dir was NOT provided, prompt the user
         project_abs_path = get_project_directory_interactive()
-        if (
-            not project_abs_path
-        ):  # Should not happen with current get_project_directory_interactive logic, but good for robustness
-            print("No valid project directory provided. Exiting.")
+        if not project_abs_path:
+            print(
+                f"{Colors.RED}No valid project directory provided. Exiting.{Colors.RESET}"
+            )
             return
 
-    print(f"CLI initialized. Analyzing project directory: {project_abs_path}")
-    print("Next: Detect project type and gather information.")
+    print(
+        f"{Colors.GREEN}CLI initialized. Analyzing project directory:{Colors.RESET} {Colors.BOLD}{project_abs_path}{Colors.RESET}"
+    )
+    print(
+        f"{Colors.BLUE}Next: Detect project type and gather information.{Colors.RESET}"
+    )
 
 
 if __name__ == "__main__":
