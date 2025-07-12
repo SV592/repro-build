@@ -141,11 +141,3 @@ The CLI automates the creation of essential Docker files:
 
 * **Dockerfile**: Generated in the same directory as `repro_build_cli.py`. It uses `FROM node:<version>-alpine` (where `<version>` is derived from your YAML), sets `WORKDIR /app/<project_name>`, and includes `COPY . .` along with `RUN` commands extracted directly from your selected YAML build job.
 * **.dockerignore**: Generated or updated in the *root of your actual project directory*. This file is critical for efficient Docker builds as it explicitly tells the Docker daemon to ignore specified paths (like `node_modules/`) when building the image. This prevents unnecessary files from being copied into the image, resulting in smaller, faster, and more secure images.
-
-## 7. Reproducibility Goals
-
-This CLI enhances reproducibility by:
-
-* **Version Pinning**: By allowing checkout to a specific Git commit, it ensures that the exact state of the code at a given point in time is used.
-* **Environment Standardization**: Docker encapsulates the build environment (Node.js version, dependencies, OS) into an image, making it consistent across different machines.
-* **Automated Configuration**: Extracts build commands directly from existing CI/CD YAML, reducing manual transcription errors and ensuring the local build environment mirrors the CI environment.
