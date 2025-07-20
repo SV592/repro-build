@@ -1,11 +1,10 @@
 # Reproducible Build CLI
 
-This repository hosts a Python Command-Line Interface (CLI) tool designed to assist developers in creating reproducible build environments using Docker, primarily by leveraging existing YAML-based CI/CD configurations (like GitHub Actions workflows). The tool automates the process of identifying project build steps, generating a Dockerfile, and optionally building a Docker image and running a container, ensuring consistent environments for software builds.
+This repository hosts a Python Command-Line Interface (CLI) tool designed to assist in creating reproducible build environments using Docker, primarily by leveraging existing YAML-based CI/CD configurations. The tool automates the process of identifying project build steps, generating a Dockerfile, and optionally building a Docker image and running a container.
 
 ## Table of Contents
 
-1.  [Project Overview](#1-project-overview)
-2.  [Features](#2-features)
+1.  [Project Overview](#1-features)
 3.  [Installation](#3-installation)
     * [Prerequisites](#prerequisites)
     * [CLI Setup](#cli-setup)
@@ -18,11 +17,8 @@ This repository hosts a Python Command-Line Interface (CLI) tool designed to ass
 7.  [Reproducibility Goals](#7-reproducibility-goals)
 8.  [Future Enhancements](#8-future-enhancements)
 
-## 1. Project Overview
 
-In software development, ensuring that a build can be consistently reproduced across different environments is crucial for reliability, debugging, and collaboration. This CLI aims to simplify this by extracting build instructions from common YAML configuration files (e.g., `.github/workflows/*.yml` for GitHub Actions) and translating them into a Docker-based reproducible environment. It helps encapsulate the build process, making it independent of the host machine's setup.
-
-## 2. Features
+## 1. Features
 
 * **Interactive Project Selection**: Browse and select project directories from your filesystem.
 * **YAML Configuration Discovery**: Automatically finds `.yml` and `.yaml` files within the selected project, which typically contain CI/CD pipeline definitions.
@@ -32,9 +28,8 @@ In software development, ensuring that a build can be consistently reproduced ac
     * Allows specifying a target commit hash for checkout, enabling builds of historical project states.
 * **Dockerfile Generation**: Creates a Dockerfile tailored to the project's detected Node.js version and extracted build steps.
 * **.dockerignore Generation**: Automatically creates or updates a `.dockerignore` file in the project root to exclude `node_modules` (and other common artifacts) from the Docker build context, optimizing image size.
-* **Docker Image Building**: Integrates with your local Docker daemon to build a Docker image based on the generated Dockerfile. Images are tagged with the project name and (optionally) the commit hash for versioning.
+* **Docker Image Building**: Integrates with your local Docker daemon to build a Docker image based on the generated Dockerfile. Images are tagged with the project name and the commit hash for versioning.
 * **Docker Container Execution**: Provides an option to immediately run a container from the newly built image.
-* **Modular Design**: The codebase is split into logical modules for maintainability and extensibility.
 
 ## 3. Installation
 
@@ -67,7 +62,7 @@ The CLI can be run interactively or with command-line arguments.
 
 ### Interactive Mode
 
-Simply run the main script without any arguments:
+Run the main script without any arguments:
 
 ```bash
 python repro_build_cli.py
@@ -139,5 +134,5 @@ The CLI is modularized into the following Python files:
 
 The CLI automates the creation of essential Docker files:
 
-* **Dockerfile**: Generated in the same directory as `repro_build_cli.py`. It uses `FROM node:<version>-alpine` (where `<version>` is derived from your YAML), sets `WORKDIR /app/<project_name>`, and includes `COPY . .` along with `RUN` commands extracted directly from your selected YAML build job.
-* **.dockerignore**: Generated or updated in the *root of your actual project directory*. This file is critical for efficient Docker builds as it explicitly tells the Docker daemon to ignore specified paths (like `node_modules/`) when building the image. This prevents unnecessary files from being copied into the image, resulting in smaller, faster, and more secure images.
+* **Dockerfile**: Generated in the same directory as `repro_build_cli.py`. It uses `FROM node:<version>-alpine` (where `<version>` is derived from your YAML), sets `WORKDIR /app/<project_name>`, and includes `COPY . .` along with `RUN` commands extracted directly from the selected YAML build job.
+* **.dockerignore**: Generated or updated in the *root of the project directory*.
