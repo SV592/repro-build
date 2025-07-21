@@ -1,6 +1,6 @@
 import os
 import yaml
-from cli_colors import Colors  # Import Colors from its new module
+from cli_colors import Colors
 
 
 def list_subdirectories(path):

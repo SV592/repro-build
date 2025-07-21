@@ -1,6 +1,6 @@
 import os
 import subprocess
-from cli_colors import Colors  # Import Colors from its new module
+from cli_colors import Colors
 
 
 def git_checkout(repo_path, commit_hash):

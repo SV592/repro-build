@@ -1,5 +1,3 @@
-# repro_build_cli.py
-
 import argparse
 import os
 import sys

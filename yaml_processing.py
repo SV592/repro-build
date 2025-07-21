@@ -1,7 +1,7 @@
 import os
 import re
 import yaml
-from cli_colors import Colors  # Import Colors from its new module
+from cli_colors import Colors
 
 
 def parse_yaml_for_build_info(yaml_file_path):

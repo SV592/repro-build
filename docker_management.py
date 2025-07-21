@@ -1,6 +1,6 @@
 import os
 import subprocess
-from cli_colors import Colors  # Import Colors from its new module
+from cli_colors import Colors
 
 
 def generate_dockerfile_from_yaml_info(project_info):
